@@ -2,14 +2,29 @@ import { Database } from "bun:sqlite";
 import { randomBytes, createHmac, timingSafeEqual } from "crypto";
 
 const SECRET = randomBytes(32);
-const activeSessions = new Set<string>();
+const MAX_SESSIONS = 10_000;
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const activeSessions = new Map<string, number>();
+
+function evictExpired(): void {
+  const now = Date.now();
+  for (const [id, createdAt] of activeSessions) {
+    if (now - createdAt > SESSION_TTL_MS) activeSessions.delete(id);
+  }
+}
 
 function createToken(): string {
+  if (activeSessions.size >= MAX_SESSIONS) evictExpired();
+  if (activeSessions.size >= MAX_SESSIONS) {
+    const oldest = activeSessions.keys().next().value!;
+    activeSessions.delete(oldest);
+  }
+
   const sessionId = randomBytes(16).toString("hex");
   const timestamp = Date.now().toString();
   const data = `${sessionId}:${timestamp}`;
   const sig = createHmac("sha256", SECRET).update(data).digest("hex");
-  activeSessions.add(sessionId);
+  activeSessions.set(sessionId, Date.now());
   return `${data}:${sig}`;
 }
 
@@ -18,19 +33,21 @@ function verifyToken(token: string): { valid: boolean; error?: string } {
   if (parts.length !== 3) return { valid: false, error: "Malformed token" };
   const [sessionId, timestamp, sig] = parts;
 
+  if (!/^[0-9a-f]{64}$/.test(sig))
+    return { valid: false, error: "Invalid signature" };
+
   const data = `${sessionId}:${timestamp}`;
   const expected = createHmac("sha256", SECRET).update(data).digest("hex");
   if (!timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex")))
     return { valid: false, error: "Invalid signature" };
 
-  if (!activeSessions.has(sessionId))
+  if (!activeSessions.delete(sessionId))
     return { valid: false, error: "Session already used or unknown" };
 
   const elapsed = Date.now() - Number(timestamp);
-  if (elapsed < 5000)
+  if (!Number.isFinite(elapsed) || elapsed < 5000)
     return { valid: false, error: "Session too short" };
 
-  activeSessions.delete(sessionId);
   return { valid: true };
 }
 
@@ -74,7 +91,7 @@ Bun.serve({
 
     // API: GET leaderboard
     if (req.method === "GET" && url.pathname === "/api/leaderboard") {
-      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "20") || 20, 1), 100);
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "10") || 10, 1), 100);
       const rows = getTop.all(limit);
       return Response.json(rows);
     }
@@ -93,19 +110,27 @@ Bun.serve({
         if (!name) return Response.json({ error: "Name is required" }, { status: 400 });
         if (!Number.isFinite(score) || score < 0) return Response.json({ error: "Score must be a non-negative integer" }, { status: 400 });
 
-        const { cnt } = countRows.get() as { cnt: number };
-        if (cnt >= MAX_SLOTS) {
-          const { min_score } = getMinTop.get(MAX_SLOTS) as { min_score: number };
-          if (score <= min_score) {
-            return Response.json({ error: "Score too low to make the leaderboard" }, { status: 409 });
+        const upsert = db.transaction(() => {
+          const { cnt } = countRows.get() as { cnt: number };
+          if (cnt >= MAX_SLOTS) {
+            const { min_score } = getMinTop.get(MAX_SLOTS) as { min_score: number };
+            if (score <= min_score) return null;
+            deleteLowest.run();
           }
-          deleteLowest.run();
-        }
+          return insertScore.get(name, score);
+        });
 
-        const entry = insertScore.get(name, score);
+        const entry = upsert();
+        if (!entry) {
+          return Response.json({ error: "Score too low to make the leaderboard" }, { status: 409 });
+        }
         return Response.json(entry, { status: 201 });
-      } catch {
-        return Response.json({ error: "Invalid request body" }, { status: 400 });
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          return Response.json({ error: "Invalid request body" }, { status: 400 });
+        }
+        console.error("Leaderboard POST error:", err);
+        return Response.json({ error: "Internal server error" }, { status: 500 });
       }
     }
 

@@ -246,8 +246,14 @@ let sessionToken = null;
 async function fetchSession() {
   try {
     const res = await fetch('/api/session');
-    if (res.ok) { const data = await res.json(); sessionToken = data.token; }
-  } catch {}
+    if (!res.ok) throw new Error(`Session fetch failed: ${res.status}`);
+    const data = await res.json();
+    sessionToken = data.token;
+  } catch (err) {
+    sessionToken = null;
+    console.error('Failed to fetch session token:', err);
+    flash('Could not connect to server');
+  }
 }
 
 const DIRS = [[0,1],[1,0],[1,1],[1,-1]];
@@ -265,7 +271,7 @@ const CROSS = [
   [14,11],[14,8],[11,8],[11,5],[8,5],[8,8]
 ];
 
-function crossDots() {
+const CROSS_DOTS = (() => {
   const set = new Set();
   for (let i = 0; i < CROSS.length; i++) {
     const [r1, c1] = CROSS[i];
@@ -278,11 +284,11 @@ function crossDots() {
     }
   }
   return [...set].map(s => s.split(',').map(Number));
-}
+})();
 
 function initGrid() {
   grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
-  for (const [r, c] of crossDots()) grid[r][c] = 1;
+  for (const [r, c] of CROSS_DOTS) grid[r][c] = 1;
   claimedLines = [];
   score = 0;
   scoreEl.textContent = '0';
@@ -338,14 +344,6 @@ function findNewLines(pr, pc) {
   return found;
 }
 
-function countPreview(r, c) {
-  if (grid[r][c] !== 0) return 0;
-  grid[r][c] = 2;
-  const n = findNewLines(r, c).length;
-  grid[r][c] = 0;
-  return n;
-}
-
 function previewLines(r, c) {
   if (grid[r][c] !== 0) return [];
   grid[r][c] = 2;
@@ -374,9 +372,10 @@ function draw() {
     ctx.stroke();
   }
 
+  let hoverPreview = [];
   if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
-    const preview = previewLines(hoverCell.r, hoverCell.c);
-    for (const line of preview) {
+    hoverPreview = previewLines(hoverCell.r, hoverCell.c);
+    for (const line of hoverPreview) {
       const [x1, y1] = px(line.cells[0].r, line.cells[0].c);
       const [x2, y2] = px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c);
       ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
@@ -419,7 +418,7 @@ function draw() {
 
   if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     const [x, y] = px(hoverCell.r, hoverCell.c);
-    const n = countPreview(hoverCell.r, hoverCell.c);
+    const n = hoverPreview.length;
     ctx.beginPath(); ctx.arc(x, y, DOT_R + 3, 0, Math.PI * 2);
     ctx.fillStyle = n > 0 ? '#c4956a20' : '#c4956a0c';
     ctx.fill();
@@ -455,10 +454,10 @@ function handleAction(r, c) {
     grid[r][c] = 2;
     const newLines = findNewLines(r, c);
     if (newLines.length > 0) {
-      claimedLines.push(newLines[0]);
-      score += 1;
+      claimedLines.push(...newLines);
+      score += newLines.length;
       scoreEl.textContent = score;
-      flash(newLines.length > 1 ? '+1 line \u00b7 ' + (newLines.length - 1) + ' more available' : '+1 line');
+      flash('+' + newLines.length + ' line' + (newLines.length > 1 ? 's' : ''));
     } else {
       grid[r][c] = 0;
       flash('No line');
@@ -466,11 +465,10 @@ function handleAction(r, c) {
   } else {
     const validLines = findNewLines(r, c);
     if (validLines.length > 0) {
-      claimedLines.push(validLines[0]);
-      score += 1;
+      claimedLines.push(...validLines);
+      score += validLines.length;
       scoreEl.textContent = score;
-      const remaining = validLines.length - 1;
-      flash('+1 line' + (remaining > 0 ? ' \u00b7 ' + remaining + ' more here' : ''));
+      flash('+' + validLines.length + ' line' + (validLines.length > 1 ? 's' : ''));
     }
   }
   draw();
@@ -525,8 +523,8 @@ async function showGameOver() {
   finalScoreEl.textContent = score;
   nameInput.value = '';
 
-  const entries = await fetchLeaderboard();
-  const canSubmit = entries.length < 10 || score > entries[entries.length - 1].score;
+  const { ok, entries } = await fetchLeaderboard();
+  const canSubmit = ok && (entries.length < 10 || score > entries[entries.length - 1].score);
   submitScoreBtn.disabled = !canSubmit;
   nameInput.disabled = !canSubmit;
   if (!canSubmit) {
@@ -551,33 +549,47 @@ async function submitScore(name) {
     await showLeaderboard();
   } catch {
     flash('Could not submit score');
+    submitScoreBtn.disabled = false;
   }
 }
 
 async function fetchLeaderboard() {
   try {
     const res = await fetch('/api/leaderboard?limit=10');
-    if (!res.ok) return [];
-    return await res.json();
+    if (!res.ok) return { ok: false, entries: [] };
+    return { ok: true, entries: await res.json() };
   } catch {
-    return [];
+    return { ok: false, entries: [] };
   }
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function showLeaderboard() {
   lbList.innerHTML = '<p style="color:#555;font-size:0.6rem">Loading...</p>';
   lbOverlay.classList.add('visible');
-  const entries = await fetchLeaderboard();
+  const { ok, entries } = await fetchLeaderboard();
+  if (!ok) {
+    lbList.innerHTML = '<p style="color:#555;font-size:0.6rem;letter-spacing:0.1em">Could not load leaderboard</p>';
+    return;
+  }
   if (entries.length === 0) {
     lbList.innerHTML = '<p style="color:#555;font-size:0.6rem;letter-spacing:0.1em">No scores yet</p>';
     return;
   }
   lbList.innerHTML = entries.map((e, i) => {
-    const d = e.created_at ? e.created_at.slice(0, 10) : '';
+    const d = e.created_at ? escapeHtml(e.created_at.slice(0, 10)) : '';
     return `<div class="lb-row">
       <span class="rank">${i + 1}.</span>
-      <span class="name">${e.name.replace(/</g, '&lt;')}</span>
-      <span class="lb-score">${e.score}</span>
+      <span class="name">${escapeHtml(String(e.name))}</span>
+      <span class="lb-score">${Number(e.score)}</span>
       <span class="date">${d}</span>
     </div>`;
   }).join('');
