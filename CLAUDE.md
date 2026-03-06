@@ -11,7 +11,7 @@ This is **Cross Five**, a browser-based puzzle game with a Bun.js backend for le
 - **Frontend**: `index.html` — single file containing all HTML, CSS, and JavaScript
 - **Backend**: `server.ts` — Bun.js HTTP server with SQLite leaderboard
 - **Database**: `leaderboard.db` — auto-created SQLite file (WAL mode)
-- **Docker**: `Dockerfile` using `oven/bun:1-distroless` for minimal image size
+- **Docker**: `Dockerfile` using `oven/bun` for deployment
 - **No build process**: Bun runs `server.ts` directly
 - **No dependencies**: Pure vanilla JS frontend, Bun built-in SQLite backend
 - **External assets**: Google Fonts CDN for typography
@@ -27,6 +27,7 @@ bun run server.ts
 ### With Docker (production)
 ```bash
 docker build -t cross-five .
+docker volume create cross-five-data
 docker run -p 3000:3000 -v cross-five-data:/app cross-five
 ```
 
@@ -36,7 +37,7 @@ docker run -p 3000:3000 -v cross-five-data:/app cross-five
 |------|---------|
 | `index.html` | Full frontend — game board, UI, overlays, API calls |
 | `server.ts` | Bun HTTP server — serves `index.html`, leaderboard API |
-| `Dockerfile` | Distroless Bun image for deployment |
+| `Dockerfile` | Bun image for deployment |
 | `.dockerignore` | Excludes db files, node_modules, .git from build |
 
 ## API Endpoints

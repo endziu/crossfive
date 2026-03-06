@@ -1,6 +1,5 @@
-FROM oven/bun:1-distroless
+FROM oven/bun
 WORKDIR /app
 COPY server.ts index.html ./
-USER nonroot
 EXPOSE 3000
-CMD ["server.ts"]
+CMD ["bun", "run", "server.ts"]
