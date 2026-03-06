@@ -220,10 +220,12 @@
 </div>
 
 <script>
-const canvas = document.getElementById('board');
-const ctx = canvas.getContext('2d');
-const statusEl = document.getElementById('status');
-const scoreEl = document.getElementById('scoreVal');
+const { canvas, ctx, statusEl, scoreEl } = {
+  canvas: document.getElementById('board'),
+  ctx: document.getElementById('board').getContext('2d'),
+  statusEl: document.getElementById('status'),
+  scoreEl: document.getElementById('scoreVal')
+};
 
 const SIZE = 20;
 const CELL = 22;
@@ -239,11 +241,34 @@ let grid = [];
 let claimedLines = [];
 let score = 0;
 let hoverCell = null;
-let statusTimeout;
+let statusTimeout = null;
 let gameOver = false;
 let sessionToken = null;
 
-async function fetchSession() {
+const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+
+const CROSS = [
+  [5, 8], [5, 11], [8, 11], [8, 14], [11, 14], [11, 11],
+  [14, 11], [14, 8], [11, 8], [11, 5], [8, 5], [8, 8]
+];
+
+const CROSS_DOTS = (() => {
+  const set = new Set();
+  for (let i = 0; i < CROSS.length; i++) {
+    const [r1, c1] = CROSS[i];
+    const [r2, c2] = CROSS[(i + 1) % CROSS.length];
+    const dr = Math.sign(r2 - r1);
+    const dc = Math.sign(c2 - c1);
+    let r = r1, c = c1;
+    while (r !== r2 || c !== c2) {
+      set.add(`${r},${c}`);
+      r += dr; c += dc;
+    }
+  }
+  return [...set].map(s => s.split(',').map(Number));
+})();
+
+const fetchSession = async () => {
   try {
     const res = await fetch('/api/session');
     if (!res.ok) throw new Error(`Session fetch failed: ${res.status}`);
@@ -254,59 +279,23 @@ async function fetchSession() {
     console.error('Failed to fetch session token:', err);
     flash('Could not connect to server');
   }
-}
+};
 
-const DIRS = [[0,1],[1,0],[1,1],[1,-1]];
-
-/* Cross shape: 4 wide x 4 long arms on 20x20
-   Center: rows 8-11, cols 8-11 (4x4)
-   Arms extend 3 cells beyond center (4 dots per edge incl. corner):
-     Top:    rows 5-7,  cols 8-11
-     Bottom: rows 12-14, cols 8-11
-     Left:   rows 8-11, cols 5-7
-     Right:  rows 8-11, cols 12-14
-*/
-const CROSS = [
-  [5,8],[5,11],[8,11],[8,14],[11,14],[11,11],
-  [14,11],[14,8],[11,8],[11,5],[8,5],[8,8]
-];
-
-const CROSS_DOTS = (() => {
-  const set = new Set();
-  for (let i = 0; i < CROSS.length; i++) {
-    const [r1, c1] = CROSS[i];
-    const [r2, c2] = CROSS[(i + 1) % CROSS.length];
-    const dr = Math.sign(r2 - r1), dc = Math.sign(c2 - c1);
-    let r = r1, c = c1;
-    while (r !== r2 || c !== c2) {
-      set.add(r + ',' + c);
-      r += dr; c += dc;
-    }
-  }
-  return [...set].map(s => s.split(',').map(Number));
-})();
-
-function initGrid() {
+const initGrid = () => {
   grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
   for (const [r, c] of CROSS_DOTS) grid[r][c] = 1;
   claimedLines = [];
   score = 0;
   scoreEl.textContent = '0';
-}
+};
 
-function px(row, col) {
-  return [PAD + col * CELL, PAD + row * CELL];
-}
+const px = (row, col) => [PAD + col * CELL, PAD + row * CELL];
 
-function isDot(r, c) {
-  return r >= 0 && r < SIZE && c >= 0 && c < SIZE && grid[r][c] > 0;
-}
+const isDot = (r, c) => r >= 0 && r < SIZE && c >= 0 && c < SIZE && grid[r][c] > 0;
 
-function lineKey(cells) {
-  return cells.map(p => `${p.r},${p.c}`).join('|');
-}
+const lineKey = (cells) => cells.map(p => `${p.r},${p.c}`).join('|');
 
-function linesConflict(a, b) {
+const linesConflict = (a, b) => {
   if (a.dr !== b.dr || a.dc !== b.dc) return false;
   let shared = 0;
   for (const p of a.cells) {
@@ -315,17 +304,19 @@ function linesConflict(a, b) {
     }
   }
   return shared >= 2;
-}
+};
 
-function findNewLines(pr, pc) {
+const findNewLines = (pr, pc) => {
   const found = [];
   for (const [dr, dc] of DIRS) {
     for (let offset = 0; offset < LINE_LEN; offset++) {
-      const sr = pr - offset * dr, sc = pc - offset * dc;
+      const sr = pr - offset * dr;
+      const sc = pc - offset * dc;
       const cells = [];
       let valid = true;
       for (let i = 0; i < LINE_LEN; i++) {
-        const r = sr + i * dr, c = sc + i * dc;
+        const r = sr + i * dr;
+        const c = sc + i * dc;
         if (!isDot(r, c)) { valid = false; break; }
         cells.push({ r, c });
       }
@@ -342,17 +333,17 @@ function findNewLines(pr, pc) {
     }
   }
   return found;
-}
+};
 
-function previewLines(r, c) {
+const previewLines = (r, c) => {
   if (grid[r][c] !== 0) return [];
   grid[r][c] = 2;
   const result = findNewLines(r, c);
   grid[r][c] = 0;
   return result;
-}
+};
 
-function draw() {
+const draw = () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   ctx.strokeStyle = '#131316';
@@ -426,19 +417,20 @@ function draw() {
     ctx.fillStyle = n > 0 ? '#c4956a70' : '#c4956a30';
     ctx.fill();
   }
-}
+};
 
-function cellAt(e) {
+const cellAt = (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX ?? e.touches?.[0]?.clientX) - rect.left;
   const my = (e.clientY ?? e.touches?.[0]?.clientY) - rect.top;
-  const c = Math.round((mx - PAD) / CELL), r = Math.round((my - PAD) / CELL);
+  const c = Math.round((mx - PAD) / CELL);
+  const r = Math.round((my - PAD) / CELL);
   if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return null;
   const [x, y] = px(r, c);
   return Math.hypot(mx - x, my - y) <= CELL * 0.45 ? { r, c } : null;
-}
+};
 
-function flash(msg) {
+const flash = (msg) => {
   statusEl.textContent = msg;
   statusEl.classList.add('active');
   clearTimeout(statusTimeout);
@@ -446,9 +438,9 @@ function flash(msg) {
     statusEl.classList.remove('active');
     setTimeout(() => statusEl.textContent = '', 300);
   }, 1500);
-}
+};
 
-function handleAction(r, c) {
+const handleAction = (r, c) => {
   if (gameOver) return;
   if (grid[r][c] === 0) {
     grid[r][c] = 2;
@@ -472,7 +464,7 @@ function handleAction(r, c) {
     }
   }
   draw();
-}
+};
 
 canvas.addEventListener('mousemove', e => { hoverCell = cellAt(e); draw(); });
 canvas.addEventListener('mouseleave', () => { hoverCell = null; draw(); });
@@ -501,7 +493,7 @@ const boardCapture = document.getElementById('boardCapture');
 const saveImgLink = document.getElementById('saveImgLink');
 const finalScoreEl = document.getElementById('finalScore');
 
-function resetGame() {
+const resetGame = () => {
   gameOver = false;
   gameOverOverlay.classList.remove('visible');
   lbOverlay.classList.remove('visible');
@@ -511,9 +503,9 @@ function resetGame() {
   fetchSession();
   flash('Board reset');
   draw();
-}
+};
 
-async function showGameOver() {
+const showGameOver = async () => {
   gameOver = true;
   hoverCell = null;
   draw();
@@ -527,16 +519,12 @@ async function showGameOver() {
   const canSubmit = ok && (entries.length < 10 || score > entries[entries.length - 1].score);
   submitScoreBtn.disabled = !canSubmit;
   nameInput.disabled = !canSubmit;
-  if (!canSubmit) {
-    nameInput.placeholder = 'Score too low';
-  } else {
-    nameInput.placeholder = 'Your name';
-  }
+  nameInput.placeholder = canSubmit ? 'Your name' : 'Score too low';
 
   gameOverOverlay.classList.add('visible');
-}
+};
 
-async function submitScore(name) {
+const submitScore = async (name) => {
   try {
     const res = await fetch('/api/leaderboard', {
       method: 'POST',
@@ -551,9 +539,9 @@ async function submitScore(name) {
     flash('Could not submit score');
     submitScoreBtn.disabled = false;
   }
-}
+};
 
-async function fetchLeaderboard() {
+const fetchLeaderboard = async () => {
   try {
     const res = await fetch('/api/leaderboard?limit=10');
     if (!res.ok) return { ok: false, entries: [] };
@@ -561,18 +549,16 @@ async function fetchLeaderboard() {
   } catch {
     return { ok: false, entries: [] };
   }
-}
+};
 
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const escapeHtml = (str) => str
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
-async function showLeaderboard() {
+const showLeaderboard = async () => {
   lbList.innerHTML = '<p style="color:#555;font-size:0.6rem">Loading...</p>';
   lbOverlay.classList.add('visible');
   const { ok, entries } = await fetchLeaderboard();
@@ -593,7 +579,7 @@ async function showLeaderboard() {
       <span class="date">${d}</span>
     </div>`;
   }).join('');
-}
+};
 
 document.getElementById('resetBtn').addEventListener('click', resetGame);
 
