@@ -3,5 +3,5 @@
 *.db-wal
 node_modules/
 
-notes.md
+.notes.md
 CODE_REVIEW.md

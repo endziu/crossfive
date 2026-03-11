@@ -15,6 +15,7 @@ This is **Cross Five**, a browser-based puzzle game with a Bun.js backend for le
 - **No build process**: Bun runs `server.ts` directly
 - **No dependencies**: Pure vanilla JS frontend, Bun built-in SQLite backend
 - **External assets**: Google Fonts CDN for typography
+- **TypeScript**: `tsconfig.json` exists (strict, ESNext, bundler resolution) but type checking is not enforced — Bun runs `.ts` directly
 
 ## Running the Game
 
@@ -24,12 +25,8 @@ bun run server.ts
 # Open http://localhost:3000
 ```
 
-### With Docker (production)
-```bash
-docker build -t cross-five .
-docker volume create cross-five-data
-docker run -p 3000:3000 -v cross-five-data:/app cross-five
-```
+### Production
+Deployed via Ansible from `../remote/`. The `Dockerfile` exists but production uses systemd on the droplet (see `remote/CLAUDE.md`).
 
 ## Files
 
