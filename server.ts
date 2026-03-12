@@ -6,6 +6,22 @@ const MAX_SESSIONS = 10_000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const activeSessions = new Map<string, number>();
 
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const rateLimitMap = new Map<string, number[]>();
+
+const isRateLimited = (ip: string): boolean => {
+  const now = Date.now();
+  const timestamps = (rateLimitMap.get(ip) ?? []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (timestamps.length >= RATE_LIMIT_MAX) {
+    rateLimitMap.set(ip, timestamps);
+    return true;
+  }
+  timestamps.push(now);
+  rateLimitMap.set(ip, timestamps);
+  return false;
+};
+
 const evictExpired = (): void => {
   const now = Date.now();
   for (const [id, createdAt] of activeSessions) {
@@ -97,7 +113,10 @@ const insertScoreEntry = (name: string, score: number): LeaderboardEntry | null 
   return insertScore.get(name, score) as LeaderboardEntry;
 };
 
-const handleSession = () => Response.json({ token: createToken() });
+const handleSession = (ip: string) => {
+  if (isRateLimited(ip)) return Response.json({ error: "Too many requests" }, { status: 429 });
+  return Response.json({ token: createToken() });
+};
 
 const handleLeaderboardGet = (url: URL) => {
   const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "10") || 10, 1), 100);
@@ -141,10 +160,11 @@ const serveStatic = (pathname: string) => {
 
 Bun.serve({
   port: 3000,
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
+    const ip = req.headers.get("x-real-ip") ?? server.requestIP(req)?.address ?? "unknown";
 
-    if (req.method === "GET" && url.pathname === "/api/session") return handleSession();
+    if (req.method === "GET" && url.pathname === "/api/session") return handleSession(ip);
     if (req.method === "GET" && url.pathname === "/api/leaderboard") return handleLeaderboardGet(url);
     if (req.method === "POST" && url.pathname === "/api/leaderboard") return handleLeaderboardPost(req);
 
