@@ -519,7 +519,7 @@ const showGameOver = async () => {
   const canSubmit = ok && (entries.length < 10 || score > entries[entries.length - 1].score);
   submitScoreBtn.disabled = !canSubmit;
   nameInput.disabled = !canSubmit;
-  nameInput.placeholder = canSubmit ? 'Your name' : 'Score too low';
+  nameInput.placeholder = canSubmit ? 'Your name' : !ok ? 'Leaderboard unavailable' : 'Score too low';
 
   gameOverOverlay.classList.add('visible');
 };
