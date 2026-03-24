@@ -2,6 +2,3 @@
 *.db-shm
 *.db-wal
 node_modules/
-
-.notes.md
-CODE_REVIEW.md
