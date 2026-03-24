@@ -1,6 +1,17 @@
 import { Database } from "bun:sqlite";
 import { randomBytes, createHmac, timingSafeEqual } from "crypto";
 
+const DEBUG = process.env["DEBUG"] === "1" || process.env["DEBUG"] === "true";
+function log(...args: unknown[]) {
+  if (DEBUG) console.log(...args);
+}
+function error(...args: unknown[]) {
+  console.error(...args);
+}
+function warn(...args: unknown[]) {
+  console.warn(...args);
+}
+
 const SECRET = randomBytes(32);
 const MAX_SESSIONS = 10_000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -114,8 +125,13 @@ const insertScoreEntry = (name: string, score: number): LeaderboardEntry | null 
 };
 
 const handleSession = (ip: string) => {
-  if (isRateLimited(ip)) return Response.json({ error: "Too many requests" }, { status: 429 });
-  return Response.json({ token: createToken() });
+  if (isRateLimited(ip)) {
+    warn("[rate-limit] session", ip);
+    return Response.json({ error: "Too many requests" }, { status: 429 });
+  }
+  const token = createToken();
+  log("[session] created", ip);
+  return Response.json({ token });
 };
 
 const handleLeaderboardGet = (url: URL) => {
@@ -128,25 +144,37 @@ const handleLeaderboardPost = async (req: Request): Promise<Response> => {
   try {
     const body = await req.json() as Record<string, unknown>;
     const token = typeof body.token === "string" ? body.token : "";
-    const { valid, error } = verifyToken(token);
-    if (!valid) return Response.json({ error: error || "Invalid token" }, { status: 403 });
+    const { valid, error: verifyError } = verifyToken(token);
+    if (!valid) {
+      warn("[invalid] leaderboard post: token", verifyError);
+      return Response.json({ error: verifyError || "Invalid token" }, { status: 403 });
+    }
 
     const name = (typeof body.name === "string" ? body.name : "").trim().slice(0, 20);
     const score = typeof body.score === "number" ? Math.floor(body.score) : NaN;
 
-    if (!name) return Response.json({ error: "Name is required" }, { status: 400 });
-    if (!Number.isFinite(score) || score < 0) return Response.json({ error: "Score must be a non-negative integer" }, { status: 400 });
+    if (!name) {
+      warn("[invalid] leaderboard post: missing name");
+      return Response.json({ error: "Name is required" }, { status: 400 });
+    }
+    if (!Number.isFinite(score) || score < 0) {
+      warn("[invalid] leaderboard post: bad score", body.score);
+      return Response.json({ error: "Score must be a non-negative integer" }, { status: 400 });
+    }
 
     const entry = insertScoreEntry(name, score);
     if (!entry) {
+      log("[leaderboard] score too low", name, score);
       return Response.json({ error: "Score too low to make the leaderboard" }, { status: 409 });
     }
+    log("[leaderboard] entry added", entry.name, entry.score);
     return Response.json(entry, { status: 201 });
   } catch (err) {
     if (err instanceof SyntaxError) {
+      warn("[invalid] leaderboard post: malformed JSON");
       return Response.json({ error: "Invalid request body" }, { status: 400 });
     }
-    console.error("Leaderboard POST error:", err);
+    error("Leaderboard POST error:", err);
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 };
@@ -164,6 +192,8 @@ Bun.serve({
     const url = new URL(req.url);
     const ip = req.headers.get("x-real-ip") ?? server.requestIP(req)?.address ?? "unknown";
 
+    log(`[req] ${req.method} ${url.pathname} [${ip}]`);
+
     if (req.method === "GET" && url.pathname === "/api/session") return handleSession(ip);
     if (req.method === "GET" && url.pathname === "/api/leaderboard") return handleLeaderboardGet(url);
     if (req.method === "POST" && url.pathname === "/api/leaderboard") return handleLeaderboardPost(req);
@@ -171,6 +201,7 @@ Bun.serve({
     const staticResp = serveStatic(url.pathname);
     if (staticResp) return staticResp;
 
+    warn("[not-found]", url.pathname);
     return new Response("Not Found", { status: 404 });
   },
 });

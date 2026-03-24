@@ -22,6 +22,8 @@ This is **Cross Five**, a browser-based puzzle game with a Bun.js backend for le
 ### With Bun (development)
 ```bash
 bun run server.ts
+# For debug logging:
+DEBUG=1 bun run server.ts
 # Open http://localhost:3000
 ```
 
@@ -42,6 +44,15 @@ Deployed via Ansible from `../remote/`. The `Dockerfile` exists but production u
 - `GET /api/session` — issues an HMAC-signed session token for leaderboard submission
 - `GET /api/leaderboard?limit=10` — returns top scores as JSON array
 - `POST /api/leaderboard` — accepts `{ name, score, token }`, validates token and inserts; returns 403 if token invalid, 409 if score too low
+
+## Logging
+
+The server uses a custom logging system controlled by the `DEBUG` environment variable:
+- **`log(...args)`**: Standard output for operational events (requests, session creation, leaderboard entries), active only when `DEBUG=true` or `DEBUG=1`.
+- **`warn(...args)`**: Warnings for client errors, rate limiting, and invalid inputs (always active).
+- **`error(...args)`**: Critical server-side errors (always active).
+
+Log format: `[category] message [optional metadata]` (e.g., `[req] GET /api/session [127.0.0.1]`).
 
 ## Session Token Auth
 
