@@ -69,7 +69,7 @@ The game logic is organized into distinct sections within the `<script>` tag:
 3. **Grid Management**: Initialize and reset game state
 4. **Line Detection**: Core game logic for finding valid 5-dot lines and handling conflicts
 5. **Rendering**: Canvas drawing with hover previews and visual feedback
-6. **Interaction**: Mouse/touch event handlers
+6. **Interaction**: Mouse/touch event handlers. Mouse acts on click; touch is two-step (`handleTap`): the first tap previews the action (`armed`), a second tap on the same target performs it
 7. **Game Over Flow**: Give Up → board capture → name input → score submission
 8. **Leaderboard**: Fetch and display top 10 scores with rank, name, score, date
 
@@ -91,7 +91,10 @@ Uses a minimalist dark theme with:
 - Accent color: `#c4956a` (warm tan)
 - Font: DM Mono (monospace, from Google Fonts)
 - Modals: `#111114` background, `#2a2a2e` borders
-- Muted grid lines and subtle hover states
+- No grid lines; empty points are faint dots
+- Starting cross dots are grey, player dots tan; claimed lines are light grey, the most recent line and dot are highlighted in tan
+- Lines stop short of their end dots (`END_GAP`): a line touching a dot passes through it, a gap means it ends there
+- The canvas is sized by JS (`resizeBoard`) to fit the space between header and controls, at device pixel ratio; game coordinates are unscaled and `scale` maps them to CSS pixels
 
 ## Modifications
 

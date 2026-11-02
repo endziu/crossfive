@@ -2,25 +2,28 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Cross Five</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap');
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  html { font-size: 125%; }
+  html { font-size: 100%; }
+  @media (min-width: 900px) and (min-height: 760px) { html { font-size: 125%; } }
 
   body {
     background: #0a0a0c;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    padding: max(0.75rem, env(safe-area-inset-top)) 0.5rem max(0.75rem, env(safe-area-inset-bottom));
     font-family: 'DM Mono', monospace;
     color: #e0ddd5;
     overflow: hidden;
+    touch-action: manipulation;
   }
 
   h1 {
@@ -28,14 +31,24 @@
     font-size: 1.1rem;
     letter-spacing: 0.3em;
     text-transform: uppercase;
-    color: #555;
-    margin-bottom: 1.5rem;
+    color: #666;
+    margin-bottom: 0.75rem;
+  }
+
+  /* The board takes whatever space the header and controls leave; JS sizes the canvas to fit. */
+  .board-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   canvas { display: block; cursor: pointer; touch-action: none; }
 
   .status {
-    margin-top: 1.5rem;
+    margin-top: 0.5rem;
     font-size: 0.75rem;
     font-weight: 300;
     letter-spacing: 0.15em;
@@ -46,9 +59,11 @@
   .status.active { color: #c4956a; }
 
   .info {
-    margin-top: 1rem;
+    margin-top: 0.5rem;
     display: flex;
-    gap: 2.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.6rem 1.25rem;
     align-items: center;
   }
 
@@ -56,7 +71,7 @@
     font-size: 0.75rem;
     font-weight: 300;
     letter-spacing: 0.15em;
-    color: #555;
+    color: #777;
   }
   .score span { color: #c4956a; }
 
@@ -67,13 +82,19 @@
     letter-spacing: 0.2em;
     text-transform: uppercase;
     background: none;
-    border: 1px solid #2a2a2e;
-    color: #555;
-    padding: 0.45rem 1rem;
+    border: 1px solid #333338;
+    color: #888;
+    padding: 0.55rem 0.9rem;
     cursor: pointer;
     transition: all 0.25s;
   }
-  button:hover { border-color: #555; color: #aaa; }
+  button:hover { border-color: #666; color: #ccc; }
+
+  @media (max-width: 480px) {
+    h1 { font-size: 0.9rem; margin-bottom: 0.5rem; }
+    .info { gap: 0.5rem 0.75rem; }
+    button { padding: 0.6rem 0.7rem; letter-spacing: 0.12em; }
+  }
 
   .help {
     margin-top: 1.2rem;
@@ -186,7 +207,7 @@
 <body>
 
 <h1>Cross Five</h1>
-<canvas id="board"></canvas>
+<div class="board-wrap" id="boardWrap"><canvas id="board"></canvas></div>
 <div class="status" id="status"></div>
 <div class="info">
   <div class="score">lines <span id="scoreVal">0</span></div>
@@ -231,16 +252,38 @@ const { canvas, ctx, statusEl, scoreEl } = {
 
 const SIZE = 20;
 const CELL = 22;
-const DOT_R = 4;
-const POINT_R = 1.2;
-const PAD = CELL;
+const DOT_R = 3.6;
+const POINT_R = 1.3;
+const END_GAP = 6.5; // lines stop this far from their end dots, so where a line ends stays visible
+const PAD = CELL * 0.7;
 const SPAN = (SIZE - 1) * CELL;
+const BOARD = SPAN + PAD * 2; // board size in game coordinates
+const MAX_BOARD_CSS = 900;
 const LINE_LEN = 5;
 
-const SCALE = 1.25; // on-screen size multiplier; game coordinates stay unscaled
+const COLOR = {
+  bg: '#0a0a0c',
+  point: '#3a3a41',
+  line: 'rgba(224, 221, 213, 0.42)',
+  accent: '#dca872',
+  crossDot: '#8e8a82',
+  playerDot: '#dca872',
+};
 
-canvas.width = canvas.height = (SPAN + PAD * 2) * SCALE;
-ctx.scale(SCALE, SCALE);
+const boardWrap = document.getElementById('boardWrap');
+let scale = 1; // CSS pixels per game unit
+
+// Fit the board into the space left by the header and controls, rendered at device resolution.
+const resizeBoard = () => {
+  const { width, height } = boardWrap.getBoundingClientRect();
+  const css = Math.max(200, Math.floor(Math.min(width, height, MAX_BOARD_CSS)));
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = canvas.style.height = `${css}px`;
+  canvas.width = canvas.height = Math.round(css * dpr);
+  scale = css / BOARD;
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  draw();
+};
 
 let grid = [];
 let claimedLines = [];
@@ -253,6 +296,8 @@ let pending = null;   // { r, c, lines } — placed dot awaiting the player's li
 let hoverLine = null; // index into pending.lines under the pointer
 let freeLines = null; // cache: claimable lines made only of existing dots (null = stale)
 let hoverFree = null; // free line under the pointer
+let lastDot = null;   // most recently placed dot, highlighted
+let armed = null;     // touch: key of the action the first tap selected; a second tap confirms it
 
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
 
@@ -298,6 +343,8 @@ const initGrid = () => {
   hoverLine = null;
   freeLines = null;
   hoverFree = null;
+  lastDot = null;
+  armed = null;
   score = 0;
   scoreEl.textContent = '0';
 };
@@ -375,14 +422,32 @@ const lineEnds = (line) => [
   px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c)
 ];
 
+// Lines are drawn END_GAP short of their end dots: a line touching a dot passes
+// through it, a small gap means it ends there (so two collinear lines stay distinct).
 const strokeLine = (line, color, width, dash = []) => {
   const [[x1, y1], [x2, y2]] = lineEnds(line);
-  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  const ux = (x2 - x1) / len * END_GAP, uy = (y2 - y1) / len * END_GAP;
+  ctx.beginPath(); ctx.moveTo(x1 + ux, y1 + uy); ctx.lineTo(x2 - ux, y2 - uy);
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
+  ctx.lineCap = 'round';
   ctx.setLineDash(dash);
   ctx.stroke();
   ctx.setLineDash([]);
+};
+
+const fillDot = (x, y, r, color) => {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+};
+
+const ringDot = (x, y, r, color, width = 1) => {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
 };
 
 // Index of the line in `lines` closest to the pointer (within maxD), or null.
@@ -420,81 +485,64 @@ const freeLineAt = (pos) => {
 };
 
 const draw = () => {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = COLOR.bg;
+  ctx.fillRect(0, 0, BOARD, BOARD);
 
-  ctx.strokeStyle = '#131316';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i < SIZE; i++) {
-    const p = PAD + i * CELL;
-    ctx.beginPath(); ctx.moveTo(PAD, p); ctx.lineTo(PAD + SPAN, p); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(p, PAD); ctx.lineTo(p, PAD + SPAN); ctx.stroke();
+  const last = claimedLines[claimedLines.length - 1];
+  for (const line of claimedLines) {
+    if (line !== last) strokeLine(line, COLOR.line, 1.6);
   }
+  if (last) strokeLine(last, COLOR.accent, 2);
 
-  for (const line of claimedLines) strokeLine(line, '#c4956a55', 2);
-
-  // Free lines (5 existing dots, claimable without a new dot) are hinted faintly.
+  // Free lines (5 existing dots, claimable without a new dot) are hinted dashed.
   if (!pending && !gameOver) {
     for (const line of getFreeLines()) {
-      if (line !== hoverFree) strokeLine(line, '#c4956a40', 1.5, [2, 4]);
+      if (line !== hoverFree) strokeLine(line, '#dca87299', 1.5, [2, 3]);
     }
   }
 
   let hoverPreview = [];
   if (pending) {
     pending.lines.forEach((line, i) => {
-      if (i !== hoverLine) strokeLine(line, '#c4956a50', 1.5, [3, 4]);
+      if (i !== hoverLine) strokeLine(line, '#dca872aa', 1.6, [3, 3]);
     });
-    if (hoverLine !== null) strokeLine(pending.lines[hoverLine], '#c4956a', 2.5);
+    if (hoverLine !== null) strokeLine(pending.lines[hoverLine], COLOR.accent, 2.6);
   } else if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     hoverPreview = previewLines(hoverCell.r, hoverCell.c);
-    for (const line of hoverPreview) strokeLine(line, '#c4956a30', 1.5);
+    for (const line of hoverPreview) strokeLine(line, '#dca872cc', 1.8, [3, 3]);
   } else if (hoverFree) {
-    strokeLine(hoverFree, '#c4956a', 2.5);
+    strokeLine(hoverFree, COLOR.accent, 2.6);
   }
 
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
       const [x, y] = px(r, c);
       const v = grid[r][c];
-      if (v === 0) {
-        ctx.beginPath(); ctx.arc(x, y, POINT_R, 0, Math.PI * 2);
-        ctx.fillStyle = '#1e1e22'; ctx.fill();
-      } else {
-        const isPlayer = v === 2;
-        ctx.beginPath(); ctx.arc(x, y, DOT_R + 4, 0, Math.PI * 2);
-        ctx.fillStyle = isPlayer ? '#c4956a30' : '#c4956a20';
-        ctx.fill();
-        ctx.beginPath(); ctx.arc(x, y, DOT_R, 0, Math.PI * 2);
-        ctx.fillStyle = '#c4956a';
-        ctx.fill();
-      }
+      if (v === 0) fillDot(x, y, POINT_R, COLOR.point);
+      else fillDot(x, y, DOT_R, v === 2 ? COLOR.playerDot : COLOR.crossDot);
     }
+  }
+
+  if (lastDot && !pending) {
+    const [x, y] = px(lastDot.r, lastDot.c);
+    ringDot(x, y, DOT_R + 2.2, COLOR.accent, 1);
   }
 
   if (pending) {
     const [x, y] = px(pending.r, pending.c);
-    ctx.beginPath(); ctx.arc(x, y, DOT_R + 4, 0, Math.PI * 2);
-    ctx.strokeStyle = '#c4956a';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(x, y, DOT_R, 0, Math.PI * 2);
-    ctx.fillStyle = '#c4956a90';
-    ctx.fill();
+    ringDot(x, y, DOT_R + 2.2, COLOR.accent, 1.2);
+    fillDot(x, y, DOT_R, '#dca872aa');
   } else if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     const [x, y] = px(hoverCell.r, hoverCell.c);
     const n = hoverPreview.length;
-    ctx.beginPath(); ctx.arc(x, y, DOT_R + 3, 0, Math.PI * 2);
-    ctx.fillStyle = n > 0 ? '#c4956a20' : '#c4956a0c';
-    ctx.fill();
-    ctx.beginPath(); ctx.arc(x, y, DOT_R, 0, Math.PI * 2);
-    ctx.fillStyle = n > 0 ? '#c4956a70' : '#c4956a30';
-    ctx.fill();
+    ringDot(x, y, DOT_R + 2.2, n > 0 ? COLOR.accent : '#dca87255', 1);
+    fillDot(x, y, DOT_R, n > 0 ? '#dca872aa' : '#dca87240');
   }
 };
 
 const pointerPos = (p) => {
   const rect = canvas.getBoundingClientRect();
-  return { x: (p.clientX - rect.left) / SCALE, y: (p.clientY - rect.top) / SCALE };
+  return { x: (p.clientX - rect.left) / scale, y: (p.clientY - rect.top) / scale };
 };
 
 const cellAt = ({ x, y }) => {
@@ -519,6 +567,7 @@ const flash = (msg, sticky = false) => {
 // Claim a line; `dot` is the newly placed dot, or null for a free line of existing dots.
 const claimLine = (line, dot = null) => {
   if (dot) grid[dot.r][dot.c] = 2;
+  lastDot = dot ? { r: dot.r, c: dot.c } : null;
   claimedLines.push(line);
   freeLines = null;
   hoverFree = null;
@@ -575,18 +624,43 @@ canvas.addEventListener('mousemove', e => updateHover(pointerPos(e)));
 canvas.addEventListener('mouseleave', () => updateHover(null));
 canvas.addEventListener('click', e => handleClick(pointerPos(e)));
 
-canvas.addEventListener('touchstart', e => {
-  e.preventDefault();
-  updateHover(pointerPos(e.touches[0]));
-});
-canvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  updateHover(pointerPos(e.touches[0]));
-});
+// What a click at `pos` would do, as a comparable key (null = nothing).
+const actionAt = (pos) => {
+  if (gameOver) return null;
+  if (pending) {
+    const i = lineAt(pos);
+    return i === null ? 'cancel' : `pick:${i}`;
+  }
+  const cell = cellAt(pos);
+  if (cell && grid[cell.r][cell.c] === 0) {
+    return previewLines(cell.r, cell.c).length ? `dot:${cell.r},${cell.c}` : 'noline';
+  }
+  const free = freeLineAt(pos);
+  return free ? `free:${lineKey(free.cells)}` : null;
+};
+
+const ARM_HINT = { dot: 'Tap again to place', free: 'Tap again to claim', pick: 'Tap again to confirm' };
+
+// Touch: a fingertip hides the point it is on and cells are small on phones, so the
+// first tap only shows what would happen; tapping the same thing again does it.
+const handleTap = (pos) => {
+  const action = actionAt(pos);
+  if (action === 'cancel' || action === 'noline' || (action && action === armed)) {
+    armed = null;
+    handleClick(pos);
+    if (!pending) updateHover(null);
+    return;
+  }
+  armed = action;
+  updateHover(action ? pos : null);
+  if (action) flash(ARM_HINT[action.split(':')[0]]);
+};
+
+canvas.addEventListener('touchstart', e => e.preventDefault());
+canvas.addEventListener('touchmove', e => e.preventDefault());
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  handleClick(pointerPos(e.changedTouches[0]));
-  updateHover(null);
+  handleTap(pointerPos(e.changedTouches[0]));
 });
 
 document.addEventListener('keydown', e => {
@@ -620,6 +694,7 @@ const showGameOver = async () => {
   pending = null;
   hoverLine = null;
   hoverFree = null;
+  armed = null;
   draw();
   const dataUrl = canvas.toDataURL('image/png');
   boardCapture.src = dataUrl;
@@ -717,7 +792,8 @@ document.getElementById('closeLbBtn').addEventListener('click', () => {
 
 initGrid();
 fetchSession();
-draw();
+new ResizeObserver(resizeBoard).observe(boardWrap);
+resizeBoard();
 </script>
 </body>
 </html>
