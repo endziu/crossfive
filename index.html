@@ -9,6 +9,8 @@
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  html { font-size: 125%; }
+
   body {
     background: #0a0a0c;
     min-height: 100vh;
@@ -98,7 +100,7 @@
     background: #111114;
     border: 1px solid #2a2a2e;
     padding: 2rem 2.5rem;
-    max-width: 420px;
+    max-width: 525px;
     width: 90%;
     max-height: 90vh;
     overflow-y: auto;
@@ -235,7 +237,10 @@ const PAD = CELL;
 const SPAN = (SIZE - 1) * CELL;
 const LINE_LEN = 5;
 
-canvas.width = canvas.height = SPAN + PAD * 2;
+const SCALE = 1.25; // on-screen size multiplier; game coordinates stay unscaled
+
+canvas.width = canvas.height = (SPAN + PAD * 2) * SCALE;
+ctx.scale(SCALE, SCALE);
 
 let grid = [];
 let claimedLines = [];
@@ -448,7 +453,7 @@ const draw = () => {
 
 const pointerPos = (p) => {
   const rect = canvas.getBoundingClientRect();
-  return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  return { x: (p.clientX - rect.left) / SCALE, y: (p.clientY - rect.top) / SCALE };
 };
 
 const cellAt = ({ x, y }) => {
