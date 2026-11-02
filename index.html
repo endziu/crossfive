@@ -251,6 +251,8 @@ let gameOver = false;
 let sessionToken = null;
 let pending = null;   // { r, c, lines } — placed dot awaiting the player's line choice
 let hoverLine = null; // index into pending.lines under the pointer
+let freeLines = null; // cache: claimable lines made only of existing dots (null = stale)
+let hoverFree = null; // free line under the pointer
 
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
 
@@ -294,6 +296,8 @@ const initGrid = () => {
   claimedLines = [];
   pending = null;
   hoverLine = null;
+  freeLines = null;
+  hoverFree = null;
   score = 0;
   scoreEl.textContent = '0';
 };
@@ -315,33 +319,47 @@ const linesConflict = (a, b) => {
   return shared >= 2;
 };
 
+// The 5-dot line starting at (sr, sc) in direction (dr, dc), if every cell is a dot
+// and it is neither claimed nor in conflict with a claimed line; otherwise null.
+const claimableLine = (sr, sc, dr, dc) => {
+  const cells = [];
+  for (let i = 0; i < LINE_LEN; i++) {
+    const r = sr + i * dr;
+    const c = sc + i * dc;
+    if (!isDot(r, c)) return null;
+    cells.push({ r, c });
+  }
+  const key = lineKey(cells);
+  if (claimedLines.some(cl => lineKey(cl.cells) === key)) return null;
+  const line = { cells, dr, dc };
+  if (claimedLines.some(cl => linesConflict(line, cl))) return null;
+  return line;
+};
+
 const findNewLines = (pr, pc) => {
   const found = [];
   for (const [dr, dc] of DIRS) {
     for (let offset = 0; offset < LINE_LEN; offset++) {
-      const sr = pr - offset * dr;
-      const sc = pc - offset * dc;
-      const cells = [];
-      let valid = true;
-      for (let i = 0; i < LINE_LEN; i++) {
-        const r = sr + i * dr;
-        const c = sc + i * dc;
-        if (!isDot(r, c)) { valid = false; break; }
-        cells.push({ r, c });
-      }
-      if (!valid) continue;
-
-      const key = lineKey(cells);
-      if (found.some(f => lineKey(f.cells) === key)) continue;
-      if (claimedLines.some(cl => lineKey(cl.cells) === key)) continue;
-
-      const line = { cells, dr, dc };
-      if (claimedLines.some(cl => linesConflict(line, cl))) continue;
-
-      found.push(line);
+      const line = claimableLine(pr - offset * dr, pc - offset * dc, dr, dc);
+      if (line) found.push(line);
     }
   }
   return found;
+};
+
+// Lines already fully formed by existing dots — claimable without placing a new dot.
+const getFreeLines = () => {
+  if (freeLines) return freeLines;
+  freeLines = [];
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      for (const [dr, dc] of DIRS) {
+        const line = claimableLine(r, c, dr, dc);
+        if (line) freeLines.push(line);
+      }
+    }
+  }
+  return freeLines;
 };
 
 const previewLines = (r, c) => {
@@ -367,14 +385,12 @@ const strokeLine = (line, color, width, dash = []) => {
   ctx.setLineDash([]);
 };
 
-// Index of the pending candidate line closest to the pointer, or null.
-// Ties (collinear overlapping candidates) go to the line whose midpoint is nearer,
+// Index of the line in `lines` closest to the pointer (within maxD), or null.
+// Ties (collinear overlapping lines) go to the line whose midpoint is nearer,
 // so pointing toward one end of a 6-in-a-row selects that end's line.
-const lineAt = ({ x, y }) => {
-  const [dx, dy] = px(pending.r, pending.c);
-  if (Math.hypot(x - dx, y - dy) < CELL * 0.45) return null; // every candidate passes through the dot
+const nearestLine = (lines, { x, y }, maxD) => {
   let best = null, bestD = Infinity, bestM = Infinity;
-  pending.lines.forEach((line, i) => {
+  lines.forEach((line, i) => {
     const [[x1, y1], [x2, y2]] = lineEnds(line);
     const vx = x2 - x1, vy = y2 - y1;
     const t = Math.max(0, Math.min(1, ((x - x1) * vx + (y - y1) * vy) / (vx * vx + vy * vy)));
@@ -384,7 +400,23 @@ const lineAt = ({ x, y }) => {
       best = i; bestD = d; bestM = m;
     }
   });
-  return bestD <= CELL * 0.6 ? best : null;
+  return bestD <= maxD ? best : null;
+};
+
+// Index of the pending candidate line under the pointer, or null.
+const lineAt = (pos) => {
+  const [dx, dy] = px(pending.r, pending.c);
+  if (Math.hypot(pos.x - dx, pos.y - dy) < CELL * 0.45) return null; // every candidate passes through the dot
+  return nearestLine(pending.lines, pos, CELL * 0.6);
+};
+
+// Free line under the pointer, or null. Empty cells take priority (they place a dot).
+const freeLineAt = (pos) => {
+  const cell = cellAt(pos);
+  if (cell && grid[cell.r][cell.c] === 0) return null;
+  const lines = getFreeLines();
+  const i = nearestLine(lines, pos, CELL * 0.35);
+  return i === null ? null : lines[i];
 };
 
 const draw = () => {
@@ -400,6 +432,13 @@ const draw = () => {
 
   for (const line of claimedLines) strokeLine(line, '#c4956a55', 2);
 
+  // Free lines (5 existing dots, claimable without a new dot) are hinted faintly.
+  if (!pending && !gameOver) {
+    for (const line of getFreeLines()) {
+      if (line !== hoverFree) strokeLine(line, '#c4956a40', 1.5, [2, 4]);
+    }
+  }
+
   let hoverPreview = [];
   if (pending) {
     pending.lines.forEach((line, i) => {
@@ -409,6 +448,8 @@ const draw = () => {
   } else if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     hoverPreview = previewLines(hoverCell.r, hoverCell.c);
     for (const line of hoverPreview) strokeLine(line, '#c4956a30', 1.5);
+  } else if (hoverFree) {
+    strokeLine(hoverFree, '#c4956a', 2.5);
   }
 
   for (let r = 0; r < SIZE; r++) {
@@ -475,9 +516,12 @@ const flash = (msg, sticky = false) => {
   }, 1500);
 };
 
-const claimLine = (r, c, line) => {
-  grid[r][c] = 2;
+// Claim a line; `dot` is the newly placed dot, or null for a free line of existing dots.
+const claimLine = (line, dot = null) => {
+  if (dot) grid[dot.r][dot.c] = 2;
   claimedLines.push(line);
+  freeLines = null;
+  hoverFree = null;
   score++;
   scoreEl.textContent = score;
   flash('+1 line');
@@ -497,17 +541,21 @@ const handleClick = (pos) => {
   if (pending) {
     const i = lineAt(pos);
     if (i === null) return cancelPending();
-    claimLine(pending.r, pending.c, pending.lines[i]);
+    claimLine(pending.lines[i], pending);
     pending = null;
     hoverLine = null;
     draw();
     return;
   }
   const cell = cellAt(pos);
-  if (!cell || grid[cell.r][cell.c] !== 0) return;
+  if (!cell || grid[cell.r][cell.c] !== 0) {
+    const free = freeLineAt(pos);
+    if (free) { claimLine(free); draw(); }
+    return;
+  }
   const lines = previewLines(cell.r, cell.c);
   if (lines.length === 0) flash('No line');
-  else if (lines.length === 1) claimLine(cell.r, cell.c, lines[0]);
+  else if (lines.length === 1) claimLine(lines[0], cell);
   else {
     pending = { r: cell.r, c: cell.c, lines };
     hoverLine = null;
@@ -519,6 +567,7 @@ const handleClick = (pos) => {
 const updateHover = (pos) => {
   hoverCell = pos ? cellAt(pos) : null;
   hoverLine = pos && pending ? lineAt(pos) : null;
+  hoverFree = pos && !pending && !gameOver ? freeLineAt(pos) : null;
   draw();
 };
 
@@ -570,6 +619,7 @@ const showGameOver = async () => {
   hoverCell = null;
   pending = null;
   hoverLine = null;
+  hoverFree = null;
   draw();
   const dataUrl = canvas.toDataURL('image/png');
   boardCapture.src = dataUrl;
