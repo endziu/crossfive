@@ -78,7 +78,8 @@ The game logic is organized into distinct sections within the `<script>` tag:
 - **Grid**: 20×20 board with cross-shaped playable area (4-wide arms)
 - **Objective**: Form lines of exactly 5 consecutive dots (horizontal, vertical, or diagonal)
 - **Conflict Resolution**: Lines sharing 2+ dots in the same direction cannot both be claimed
-- **Reuse**: Existing dots can be used to form additional non-conflicting lines
+- **One dot, one line**: Each placed dot claims exactly one line (score = lines). If a dot would complete several lines, it stays *pending*: candidates are drawn dashed, the one nearest the pointer is highlighted, clicking it confirms; clicking elsewhere or Esc cancels (dot not placed). Unchosen lines are lost for good — lines can only be claimed by placing a new dot
+- **Reuse**: Existing dots can be part of later lines, as long as the new line doesn't conflict
 - **Game Over**: Player clicks "Give Up" to end the game and optionally submit score
 - **Leaderboard**: Top 10 scores; new scores must beat the lowest to enter when full
 

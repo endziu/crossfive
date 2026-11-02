@@ -244,6 +244,8 @@ let hoverCell = null;
 let statusTimeout = null;
 let gameOver = false;
 let sessionToken = null;
+let pending = null;   // { r, c, lines } — placed dot awaiting the player's line choice
+let hoverLine = null; // index into pending.lines under the pointer
 
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
 
@@ -285,6 +287,8 @@ const initGrid = () => {
   grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
   for (const [r, c] of CROSS_DOTS) grid[r][c] = 1;
   claimedLines = [];
+  pending = null;
+  hoverLine = null;
   score = 0;
   scoreEl.textContent = '0';
 };
@@ -343,6 +347,41 @@ const previewLines = (r, c) => {
   return result;
 };
 
+const lineEnds = (line) => [
+  px(line.cells[0].r, line.cells[0].c),
+  px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c)
+];
+
+const strokeLine = (line, color, width, dash = []) => {
+  const [[x1, y1], [x2, y2]] = lineEnds(line);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.setLineDash(dash);
+  ctx.stroke();
+  ctx.setLineDash([]);
+};
+
+// Index of the pending candidate line closest to the pointer, or null.
+// Ties (collinear overlapping candidates) go to the line whose midpoint is nearer,
+// so pointing toward one end of a 6-in-a-row selects that end's line.
+const lineAt = ({ x, y }) => {
+  const [dx, dy] = px(pending.r, pending.c);
+  if (Math.hypot(x - dx, y - dy) < CELL * 0.45) return null; // every candidate passes through the dot
+  let best = null, bestD = Infinity, bestM = Infinity;
+  pending.lines.forEach((line, i) => {
+    const [[x1, y1], [x2, y2]] = lineEnds(line);
+    const vx = x2 - x1, vy = y2 - y1;
+    const t = Math.max(0, Math.min(1, ((x - x1) * vx + (y - y1) * vy) / (vx * vx + vy * vy)));
+    const d = Math.hypot(x - x1 - t * vx, y - y1 - t * vy);
+    const m = Math.hypot(x - (x1 + x2) / 2, y - (y1 + y2) / 2);
+    if (d < bestD - 1 || (Math.abs(d - bestD) <= 1 && m < bestM)) {
+      best = i; bestD = d; bestM = m;
+    }
+  });
+  return bestD <= CELL * 0.6 ? best : null;
+};
+
 const draw = () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -354,38 +393,17 @@ const draw = () => {
     ctx.beginPath(); ctx.moveTo(p, PAD); ctx.lineTo(p, PAD + SPAN); ctx.stroke();
   }
 
-  for (const line of claimedLines) {
-    const [x1, y1] = px(line.cells[0].r, line.cells[0].c);
-    const [x2, y2] = px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c);
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    ctx.strokeStyle = '#c4956a55';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
+  for (const line of claimedLines) strokeLine(line, '#c4956a55', 2);
 
   let hoverPreview = [];
-  if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
+  if (pending) {
+    pending.lines.forEach((line, i) => {
+      if (i !== hoverLine) strokeLine(line, '#c4956a50', 1.5, [3, 4]);
+    });
+    if (hoverLine !== null) strokeLine(pending.lines[hoverLine], '#c4956a', 2.5);
+  } else if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     hoverPreview = previewLines(hoverCell.r, hoverCell.c);
-    for (const line of hoverPreview) {
-      const [x1, y1] = px(line.cells[0].r, line.cells[0].c);
-      const [x2, y2] = px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c);
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-      ctx.strokeStyle = '#c4956a30';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-  }
-
-  if (hoverCell && grid[hoverCell.r][hoverCell.c] > 0) {
-    const lines = findNewLines(hoverCell.r, hoverCell.c);
-    for (const line of lines) {
-      const [x1, y1] = px(line.cells[0].r, line.cells[0].c);
-      const [x2, y2] = px(line.cells[LINE_LEN - 1].r, line.cells[LINE_LEN - 1].c);
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-      ctx.strokeStyle = '#c4956a40';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+    for (const line of hoverPreview) strokeLine(line, '#c4956a30', 1.5);
   }
 
   for (let r = 0; r < SIZE; r++) {
@@ -407,7 +425,16 @@ const draw = () => {
     }
   }
 
-  if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
+  if (pending) {
+    const [x, y] = px(pending.r, pending.c);
+    ctx.beginPath(); ctx.arc(x, y, DOT_R + 4, 0, Math.PI * 2);
+    ctx.strokeStyle = '#c4956a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, DOT_R, 0, Math.PI * 2);
+    ctx.fillStyle = '#c4956a90';
+    ctx.fill();
+  } else if (hoverCell && grid[hoverCell.r][hoverCell.c] === 0) {
     const [x, y] = px(hoverCell.r, hoverCell.c);
     const n = hoverPreview.length;
     ctx.beginPath(); ctx.arc(x, y, DOT_R + 3, 0, Math.PI * 2);
@@ -419,69 +446,97 @@ const draw = () => {
   }
 };
 
-const cellAt = (e) => {
+const pointerPos = (p) => {
   const rect = canvas.getBoundingClientRect();
-  const mx = (e.clientX ?? e.touches?.[0]?.clientX) - rect.left;
-  const my = (e.clientY ?? e.touches?.[0]?.clientY) - rect.top;
-  const c = Math.round((mx - PAD) / CELL);
-  const r = Math.round((my - PAD) / CELL);
-  if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return null;
-  const [x, y] = px(r, c);
-  return Math.hypot(mx - x, my - y) <= CELL * 0.45 ? { r, c } : null;
+  return { x: p.clientX - rect.left, y: p.clientY - rect.top };
 };
 
-const flash = (msg) => {
+const cellAt = ({ x, y }) => {
+  const c = Math.round((x - PAD) / CELL);
+  const r = Math.round((y - PAD) / CELL);
+  if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return null;
+  const [cx, cy] = px(r, c);
+  return Math.hypot(x - cx, y - cy) <= CELL * 0.45 ? { r, c } : null;
+};
+
+const flash = (msg, sticky = false) => {
   statusEl.textContent = msg;
   statusEl.classList.add('active');
   clearTimeout(statusTimeout);
+  if (sticky) return;
   statusTimeout = setTimeout(() => {
     statusEl.classList.remove('active');
-    setTimeout(() => statusEl.textContent = '', 300);
+    statusTimeout = setTimeout(() => statusEl.textContent = '', 300);
   }, 1500);
 };
 
-const handleAction = (r, c) => {
+const claimLine = (r, c, line) => {
+  grid[r][c] = 2;
+  claimedLines.push(line);
+  score++;
+  scoreEl.textContent = score;
+  flash('+1 line');
+};
+
+const cancelPending = () => {
+  pending = null;
+  hoverLine = null;
+  flash('Cancelled');
+  draw();
+};
+
+// One placed dot = exactly one line. With several candidates the dot stays
+// pending until the player picks a line (click near it) or cancels (click away / Esc).
+const handleClick = (pos) => {
   if (gameOver) return;
-  if (grid[r][c] === 0) {
-    grid[r][c] = 2;
-    const newLines = findNewLines(r, c);
-    if (newLines.length > 0) {
-      claimedLines.push(...newLines);
-      score += newLines.length;
-      scoreEl.textContent = score;
-      flash('+' + newLines.length + ' line' + (newLines.length > 1 ? 's' : ''));
-    } else {
-      grid[r][c] = 0;
-      flash('No line');
-    }
-  } else {
-    const validLines = findNewLines(r, c);
-    if (validLines.length > 0) {
-      claimedLines.push(...validLines);
-      score += validLines.length;
-      scoreEl.textContent = score;
-      flash('+' + validLines.length + ' line' + (validLines.length > 1 ? 's' : ''));
-    }
+  if (pending) {
+    const i = lineAt(pos);
+    if (i === null) return cancelPending();
+    claimLine(pending.r, pending.c, pending.lines[i]);
+    pending = null;
+    hoverLine = null;
+    draw();
+    return;
+  }
+  const cell = cellAt(pos);
+  if (!cell || grid[cell.r][cell.c] !== 0) return;
+  const lines = previewLines(cell.r, cell.c);
+  if (lines.length === 0) flash('No line');
+  else if (lines.length === 1) claimLine(cell.r, cell.c, lines[0]);
+  else {
+    pending = { r: cell.r, c: cell.c, lines };
+    hoverLine = null;
+    flash(`Choose 1 of ${lines.length} lines`, true);
   }
   draw();
 };
 
-canvas.addEventListener('mousemove', e => { hoverCell = cellAt(e); draw(); });
-canvas.addEventListener('mouseleave', () => { hoverCell = null; draw(); });
-canvas.addEventListener('click', e => {
-  const cell = cellAt(e);
-  if (cell) handleAction(cell.r, cell.c);
-});
+const updateHover = (pos) => {
+  hoverCell = pos ? cellAt(pos) : null;
+  hoverLine = pos && pending ? lineAt(pos) : null;
+  draw();
+};
+
+canvas.addEventListener('mousemove', e => updateHover(pointerPos(e)));
+canvas.addEventListener('mouseleave', () => updateHover(null));
+canvas.addEventListener('click', e => handleClick(pointerPos(e)));
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  hoverCell = cellAt(e.touches[0]);
-  draw();
+  updateHover(pointerPos(e.touches[0]));
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  updateHover(pointerPos(e.touches[0]));
 });
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  if (hoverCell) handleAction(hoverCell.r, hoverCell.c);
-  hoverCell = null;
+  handleClick(pointerPos(e.changedTouches[0]));
+  updateHover(null);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && pending && !gameOver) cancelPending();
 });
 
 const gameOverOverlay = document.getElementById('gameOverOverlay');
@@ -508,6 +563,8 @@ const resetGame = () => {
 const showGameOver = async () => {
   gameOver = true;
   hoverCell = null;
+  pending = null;
+  hoverLine = null;
   draw();
   const dataUrl = canvas.toDataURL('image/png');
   boardCapture.src = dataUrl;
