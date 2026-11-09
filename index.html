@@ -89,6 +89,7 @@
     transition: all 0.25s;
   }
   button:hover { border-color: #666; color: #ccc; }
+  button.on { border-color: #c4956a; color: #c4956a; }
 
   @media (max-width: 480px) {
     h1 { font-size: 0.9rem; margin-bottom: 0.5rem; }
@@ -211,6 +212,7 @@
 <div class="status" id="status"></div>
 <div class="info">
   <div class="score">lines <span id="scoreVal">0</span></div>
+  <button id="hintBtn" aria-pressed="false">Hints</button>
   <button id="resetBtn">Reset</button>
   <button id="giveUpBtn">Give Up</button>
   <button id="lbBtn">Leaderboard</button>
@@ -298,6 +300,8 @@ let freeLines = null; // cache: claimable lines made only of existing dots (null
 let hoverFree = null; // free line under the pointer
 let lastDot = null;   // most recently placed dot, highlighted
 let armed = null;     // touch: key of the action the first tap selected; a second tap confirms it
+let showHints = false;
+let moveCells = null; // cache: empty cells where a dot would complete a line (null = stale)
 
 const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
 
@@ -342,6 +346,7 @@ const initGrid = () => {
   pending = null;
   hoverLine = null;
   freeLines = null;
+  moveCells = null;
   hoverFree = null;
   lastDot = null;
   armed = null;
@@ -415,6 +420,18 @@ const previewLines = (r, c) => {
   const result = findNewLines(r, c);
   grid[r][c] = 0;
   return result;
+};
+
+// Empty cells where placing a dot would complete at least one line.
+const getMoveCells = () => {
+  if (moveCells) return moveCells;
+  moveCells = [];
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] === 0 && previewLines(r, c).length) moveCells.push({ r, c });
+    }
+  }
+  return moveCells;
 };
 
 const lineEnds = (line) => [
@@ -523,6 +540,14 @@ const draw = () => {
     }
   }
 
+  if (showHints && !pending && !gameOver) {
+    for (const { r, c } of getMoveCells()) {
+      const [x, y] = px(r, c);
+      ringDot(x, y, DOT_R, '#3f9a5070', 1);
+      fillDot(x, y, POINT_R + 0.3, '#3f9a50a8');
+    }
+  }
+
   if (lastDot && !pending) {
     const [x, y] = px(lastDot.r, lastDot.c);
     ringDot(x, y, DOT_R + 2.2, COLOR.accent, 1);
@@ -570,10 +595,12 @@ const claimLine = (line, dot = null) => {
   lastDot = dot ? { r: dot.r, c: dot.c } : null;
   claimedLines.push(line);
   freeLines = null;
+  moveCells = null;
   hoverFree = null;
   score++;
   scoreEl.textContent = score;
-  flash('+1 line');
+  const stuck = showHints && !getMoveCells().length && !getFreeLines().length;
+  flash(stuck ? '+1 line · no moves left' : '+1 line');
 };
 
 const cancelPending = () => {
@@ -665,6 +692,7 @@ canvas.addEventListener('touchend', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && pending && !gameOver) cancelPending();
+  if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.metaKey && !e.altKey && e.target.tagName !== 'INPUT') toggleHints();
 });
 
 const gameOverOverlay = document.getElementById('gameOverOverlay');
@@ -767,6 +795,16 @@ const showLeaderboard = async () => {
     </div>`;
   }).join('');
 };
+
+const hintBtn = document.getElementById('hintBtn');
+const toggleHints = () => {
+  showHints = !showHints;
+  hintBtn.classList.toggle('on', showHints);
+  hintBtn.setAttribute('aria-pressed', showHints);
+  if (showHints && !gameOver && !getMoveCells().length && !getFreeLines().length) flash('No moves left');
+  draw();
+};
+hintBtn.addEventListener('click', toggleHints);
 
 document.getElementById('resetBtn').addEventListener('click', resetGame);
 

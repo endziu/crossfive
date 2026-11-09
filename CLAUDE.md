@@ -80,6 +80,7 @@ The game logic is organized into distinct sections within the `<script>` tag:
 - **Conflict Resolution**: Lines sharing 2+ dots in the same direction cannot both be claimed
 - **One dot, one line**: Each placed dot claims exactly one line (score = lines). If a dot would complete several lines, it stays *pending*: candidates are drawn dashed, the one nearest the pointer is highlighted, clicking it confirms; clicking elsewhere or Esc cancels (dot not placed). Unchosen lines stay on the board as free lines
 - **Free lines**: Any unclaimed, non-conflicting run of 5 existing dots can be claimed without placing a dot — they are drawn faintly dashed; hover near one (it highlights) and click. Empty cells take priority over free-line hover
+- **Hints**: The Hints button (or `H`) toggles green markers on every empty cell where a dot would complete a line (cached in `moveCells`, cleared whenever the grid changes). With hints on, the game also says "no moves left" once no dot moves or free lines remain
 - **Reuse**: Existing dots can be part of later lines, as long as the new line doesn't conflict
 - **Game Over**: Player clicks "Give Up" to end the game and optionally submit score
 - **Leaderboard**: Top 10 scores; new scores must beat the lowest to enter when full
